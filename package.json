@@ -1,4 +1,9 @@
 {
+  "name": "recep-root",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix Recep run dev"
+  },
   "dependencies": {
     "antd": "^6.5.1",
     "axios": "^1.18.1",

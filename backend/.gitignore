@@ -1,0 +1,31 @@
+# Ambiente virtual
+.venv/
+venv/
+
+# Variáveis de ambiente / segredos
+.env
+.env
+
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Banco local (só existe se alguém rodar sem configurar o Postgres)
+db.sqlite3
+db.sqlite3-journal
+
+# Django
+*.log
+media/
+staticfiles/
+
+# Editor / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# não coloquei o docker aqui ainda para voce conseguir fazer a instação caso queira
