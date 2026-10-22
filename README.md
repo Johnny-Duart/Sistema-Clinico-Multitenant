@@ -72,6 +72,34 @@ flowchart TD
 
 ---
 
+## 🛡️ Segurança de Dados, Multi-Tenancy & OWASP API Compliance
+
+A plataforma foi arquitetada seguindo princípios estritos de cibersegurança e isolamento lógico (LGPD):
+
+* **Derivação Estrita de Escopo por Token:** O backend ignora IDs de clínicas injetados no corpo da requisição e deriva a clínica exclusivamente a partir do token JWT autenticado.
+* **Proteção contra BOLA / IDOR (OWASP API1):** Tentativas de acessar, editar ou cancelar recursos de outro tenant retornam imediatamente `HTTP 404 Not Found`.
+* **Mitigação de Account Takeover (ATO):** O fluxo público de agendamento valida credenciais via hash criptográfico (`check_password`) antes de associar agendamentos a usuários pré-existentes.
+* **Prevenção de Vínculo Cruzado:** Validação em nível de serializer que impede profissionais de uma clínica de associarem pacientes pertencentes a outros tenants.
+* **Arquitetura Fail-Closed:** Usuários sem tenant atribuído recebem `queryset.none()` por padrão, eliminando risco de exposição acidental da base.
+* **Proteção de Dados Pessoais (LGPD):** Endpoints com dados sensíveis (PII) são restritos operacionalmente à equipe clínica (`IsClinicStaff`), retornando `403 Forbidden` para pacientes.
+
+---
+
+## 🧪 Engenharia de Software e Testes Automatizados (31 Testes)
+
+Suíte completa de testes automatizados cobrindo fluxos críticos de negócio e segurança:
+* **Agendamentos (16 testes):** Testes de isolamento entre tenants, tentativas de violação de IDOR, cancelamento e portal do paciente.
+* **Pacientes (6 testes):** Isolamento de prontuários, bloqueio de pacientes comuns e comportamento fail-closed.
+* **Clínicas (5 testes):** Proteção contra Account Takeover, prevenção de *double-booking* (`HTTP 409 Conflict`) e proteção contra DoS em cálculo de slots.
+* **Usuários (4 testes):** Autenticação, endpoint `/me` e integridade cadastral.
+
+```bash
+# Executar a suíte de testes
+poetry run python manage.py test
+```
+
+---
+
 ## 🔑 Contas de Demonstração Rápidas
 
 Para facilitar a avaliação por recrutadores e testes rápidos, o projeto já inclui um comando de *seed* com as seguintes contas pré-configuradas:
