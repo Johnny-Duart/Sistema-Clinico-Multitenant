@@ -1,6 +1,7 @@
 from datetime import datetime, time, timedelta
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
 from rest_framework.response import Response
@@ -49,7 +50,6 @@ class HorariosDisponiveisView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Verificar se é data passada
         hoje = timezone.localdate()
         if data_alvo < hoje:
             return Response(
@@ -57,8 +57,13 @@ class HorariosDisponiveisView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # Gerar slots de tempo do início ao fim
-        slot_min = clinica.duracao_slot_minutos or 30
+        slot_min = clinica.duracao_slot_minutos
+        if not slot_min or slot_min <= 0 or clinica.hora_abertura >= clinica.hora_fechamento:
+            return Response(
+                {"erro": "Configuração de horários ou duração de slot da clínica é inválida."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         hora_atual = datetime.combine(data_alvo, clinica.hora_abertura)
         hora_fim = datetime.combine(data_alvo, clinica.hora_fechamento)
 
@@ -67,7 +72,6 @@ class HorariosDisponiveisView(APIView):
             todos_slots.append(hora_atual)
             hora_atual += timedelta(minutes=slot_min)
 
-        # Buscar agendamentos existentes no dia que não estejam cancelados
         agendamentos_ocupados = Agendamento.objects.filter(
             clinica=clinica,
             data_hora__date=data_alvo,
@@ -78,7 +82,6 @@ class HorariosDisponiveisView(APIView):
             for a in agendamentos_ocupados
         }
 
-        # Filtrar horários passados se o dia for hoje
         agora = timezone.localtime()
         horarios_disponiveis = []
         for slot in todos_slots:
@@ -138,7 +141,6 @@ class AgendarPublicoView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Checar se já existe agendamento neste horário na clínica
         horario_ocupado = Agendamento.objects.filter(
             clinica=clinica,
             data_hora=data_hora,
@@ -154,11 +156,22 @@ class AgendarPublicoView(APIView):
         usuario = None
         tokens = None
 
-        # Criar conta para o paciente se informado senha
         if senha:
             username = email or cpf_limpo
-            usuario = Usuario.objects.filter(username=username).first()
-            if not usuario:
+            busca_user = Q(username=username)
+            if email:
+                busca_user |= Q(email__iexact=email)
+            if cpf_limpo:
+                busca_user |= Q(cpf=cpf_limpo)
+
+            usuario = Usuario.objects.filter(busca_user).first()
+            if usuario:
+                if not usuario.check_password(senha):
+                    return Response(
+                        {"erro": "Já existe uma conta associada a este usuário/e-mail, mas a senha informada está incorreta."},
+                        status=status.HTTP_401_UNAUTHORIZED,
+                    )
+            else:
                 usuario = Usuario.objects.create_user(
                     username=username,
                     email=email,
@@ -175,7 +188,6 @@ class AgendarPublicoView(APIView):
                 "refresh": str(refresh),
             }
 
-        # Criar ou atualizar Paciente
         paciente, _ = Paciente.objects.get_or_create(
             clinica=clinica,
             cpf=cpf_limpo,
@@ -190,7 +202,6 @@ class AgendarPublicoView(APIView):
             paciente.usuario = usuario
             paciente.save()
 
-        # Criar Agendamento
         agendamento = Agendamento.objects.create(
             clinica=clinica,
             paciente=paciente,
