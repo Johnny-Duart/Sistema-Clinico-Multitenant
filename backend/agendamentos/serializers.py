@@ -29,3 +29,23 @@ class AgendamentoSerializer(serializers.ModelSerializer):
             "criado_em",
             "atualizado_em",
         ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        clinica = None
+        if self.instance and self.instance.clinica:
+            clinica = self.instance.clinica
+        elif user and getattr(user, "role", "") != "admin" and not getattr(user, "is_superuser", False):
+            clinica = getattr(user, "clinica", None)
+        elif "clinica" in attrs:
+            clinica = attrs.get("clinica")
+
+        paciente = attrs.get("paciente") or (self.instance.paciente if self.instance else None)
+        if clinica and paciente and paciente.clinica and paciente.clinica != clinica:
+            raise serializers.ValidationError(
+                {"paciente": "O paciente selecionado não pertence à clínica deste agendamento."}
+            )
+
+        return attrs
