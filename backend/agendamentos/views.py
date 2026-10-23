@@ -1,6 +1,7 @@
 from datetime import datetime
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from .models import Agendamento
@@ -16,19 +17,19 @@ class AgendamentoViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = Agendamento.objects.select_related("paciente", "clinica").all()
 
-        # Se for paciente, vê apenas os agendamentos dele
         if getattr(user, "role", "") == "paciente":
             return queryset.filter(paciente__usuario=user).order_by("-data_hora")
 
-        # Se tiver clínica associada (médico / recepcionista)
-        if getattr(user, "role", "") != "admin" and getattr(user, "clinica", None):
-            queryset = queryset.filter(clinica=user.clinica)
-        elif "clinica" in self.request.query_params:
+        if getattr(user, "role", "") == "admin" or user.is_superuser:
             clinica_slug = self.request.query_params.get("clinica")
             if clinica_slug:
                 queryset = queryset.filter(clinica__slug=clinica_slug)
+        else:
+            if getattr(user, "clinica", None):
+                queryset = queryset.filter(clinica=user.clinica)
+            else:
+                return queryset.none()
 
-        # Filtro opcional por data (AAAA-MM-DD)
         data_filtro = self.request.query_params.get("data")
         if data_filtro:
             try:
@@ -37,7 +38,6 @@ class AgendamentoViewSet(viewsets.ModelViewSet):
             except ValueError:
                 pass
 
-        # Filtro opcional por status
         status_filtro = self.request.query_params.get("status")
         if status_filtro:
             queryset = queryset.filter(status=status_filtro)
@@ -46,14 +46,45 @@ class AgendamentoViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
-        if getattr(user, "clinica", None) and not serializer.validated_data.get("clinica"):
+
+        if getattr(user, "role", "") == "paciente":
+            raise PermissionDenied(
+                "Pacientes devem utilizar o fluxo de agendamento público para reservar horários."
+            )
+
+        if getattr(user, "role", "") != "admin" and not user.is_superuser:
+            if not getattr(user, "clinica", None):
+                raise PermissionDenied(
+                    "Usuário sem clínica vinculada não possui permissão para cadastrar agendamentos."
+                )
             serializer.save(clinica=user.clinica)
+        else:
+            paciente = serializer.validated_data.get("paciente")
+            if "clinica" not in serializer.validated_data and paciente and paciente.clinica:
+                serializer.save(clinica=paciente.clinica)
+            else:
+                serializer.save()
+
+    def perform_update(self, serializer):
+        user = self.request.user
+        if getattr(user, "role", "") == "paciente":
+            raise PermissionDenied("Pacientes não possuem permissão para editar agendamentos diretamente.")
+
+        if getattr(user, "role", "") != "admin" and not user.is_superuser:
+            serializer.save(clinica=self.get_object().clinica)
         else:
             serializer.save()
 
+    def perform_destroy(self, instance):
+        user = self.request.user
+        if getattr(user, "role", "") == "paciente":
+            raise PermissionDenied(
+                "Pacientes não possuem permissão para excluir agendamentos. Utilize a ação de cancelamento."
+            )
+        instance.delete()
+
     @action(detail=False, methods=["get"], url_path="meus")
     def meus(self, request):
-        """Retorna os agendamentos do paciente logado"""
         user = request.user
         agendamentos = Agendamento.objects.filter(
             paciente__usuario=user
@@ -66,11 +97,16 @@ class AgendamentoViewSet(viewsets.ModelViewSet):
         agendamento = self.get_object()
         user = request.user
 
-        # Paciente só pode cancelar se for o agendamento dele
         if getattr(user, "role", "") == "paciente":
-            if agendamento.paciente.usuario != user:
+            if not agendamento.paciente or agendamento.paciente.usuario != user:
                 return Response(
-                    {"erro": "Permissão negada."},
+                    {"erro": "Permissão negada. Este agendamento não pertence ao seu usuário."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        elif getattr(user, "role", "") != "admin" and not user.is_superuser:
+            if agendamento.clinica != getattr(user, "clinica", None):
+                return Response(
+                    {"erro": "Permissão negada. Agendamento pertence a outra clínica."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
@@ -85,6 +121,13 @@ class AgendamentoViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["patch"], url_path="status")
     def atualizar_status(self, request, pk=None):
+        user = request.user
+        if getattr(user, "role", "") == "paciente":
+            return Response(
+                {"erro": "Pacientes não possuem permissão para alterar o status operacional do agendamento."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         agendamento = self.get_object()
         novo_status = request.data.get("status")
         status_validos = [s[0] for s in Agendamento.STATUS_CHOICES]
